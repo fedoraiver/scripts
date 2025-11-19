@@ -7,7 +7,7 @@ import argparse
 
 
 def main():
-    data_root_dir = "./laion400m/data"
+    data_root_dir = "./my_datasets/laion400m/data"
     pattern = re.compile(
         r"part-\d{5}-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-c000\.snappy\.parquet$"
     )
@@ -19,16 +19,16 @@ def main():
                 matches.append(full_path)
     matches.sort()
     parser = argparse.ArgumentParser()
-    parser.add_argument("--index", type=int, required=True)
+    parser.add_argument("--index", "--i", type=int, required=True)
     args = parser.parse_args()
 
     root_dir = (
-        "laion400m/laion400m/part-"
+        "midtraining_new/images/laion400m/part-"
         + str(args.index).zfill(5)
         + "-4227e361-38e7-40d5-8822-c6db46ea077c-c000.snappy.parquet"
     )
-    output_file = "laion400m/laion_data_" + str(args.index) + ".jsonl"
-    df = pd.read_parquet(matches[111], engine="pyarrow")
+    output_file = "my_datasets/laion400m/laion_data_fix" + str(args.index) + ".jsonl"
+    df = pd.read_parquet(matches[args.index], engine="pyarrow")
 
     # 使用 jsonlines 打开写入器
     with jsonlines.open(output_file, mode="w") as writer:
