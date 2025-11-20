@@ -1,6 +1,56 @@
 from datasets import *
 import argparse
 import os
+import re
+
+url_pattern = re.compile(r"http|www|\.com|images/")
+
+
+def clean_pattern(text):
+    if not isinstance(text, str):
+        return text
+    is_match = url_pattern.search(text)
+    if is_match == None:
+        return text
+    else:
+        return False
+
+
+def fix_image_ext(path):
+    if not path:
+        return path
+
+    base, _ = os.path.splitext(path)
+    for ext in [".jpg", ".png", ".jpeg", ".webp"]:
+        candidate = base + ext
+        if os.path.exists(candidate):
+            print(candidate)
+            return candidate
+
+    print(f"⚠️ File not found: {path}")
+    return path
+
+
+# 根据需求修改
+def process(sample, i):
+    records = []
+    if sample.get("pos_text") is None:
+        print(f"⚠️ pos_text is None at index {i}")
+        return {"records": records}
+    if clean_pattern(sample["pos_text"]) == False:
+        print(f"⚠️ pos_text has unwanted pattern {i}")
+        return {"records": records}
+    record = {
+        "qry": "Find me an everyday image that matches the given caption.\n"
+        + clean_pattern(sample["pos_text"]),
+        "qry_image_path": "",
+        "pos_text": "<|image_pad|>\nRepresent the given image\n",
+        "pos_image_path": sample["qry_image_path"].replace(
+            "midtraining_new/images", "laion400m", 1
+        ),
+    }
+    records.append(record)
+    return {"records": records}
 
 
 def main():
@@ -8,35 +58,6 @@ def main():
     parser.add_argument("--f", type=str, required=True)
     parser.add_argument("--o", type=str, required=True)
     args = parser.parse_args()
-
-    def fix_image_ext(path):
-        if not path:
-            return path
-
-        base, _ = os.path.splitext(path)
-        for ext in [".jpg", ".png", ".jpeg", ".webp"]:
-            candidate = base + ext
-            if os.path.exists(candidate):
-                print(candidate)
-                return candidate
-
-        print(f"⚠️ File not found: {path}")
-        return path
-
-    # 根据需求修改
-    def process(sample, i):
-        records = []
-        # if sample.get("pos_text") is None:
-        #     print(f"⚠️ pos_text is None at index {i}")
-        #     return {"records": records}
-        record = {
-            "qry": sample["qry"],
-            "qry_image_path": sample["qry_image_path"].replace("images/", "", 1),
-            "pos_text": sample["pos_text"],
-            "pos_image_path": sample["pos_image_path"],
-        }
-        records.append(record)
-        return {"records": records}
 
     ds = load_dataset("json", data_files=args.f)["train"]
     ds2 = ds.map(process, with_indices=True, num_proc=64)
