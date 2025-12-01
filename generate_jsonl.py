@@ -4,28 +4,26 @@ import argparse
 import json
 from jinja2 import Template
 
-label_names = open("./SUN397/SUN397_classnames.txt").read().splitlines()
+parser = argparse.ArgumentParser()
+parser.add_argument(
+    "--p",
+    type=str,
+    required=True,
+)
+parser.add_argument(
+    "--o",
+    type=str,
+    required=True,
+)
+parser.add_argument(
+    "--s",
+    type=str,
+    default="train",
+)
+args = parser.parse_args()
 
 
 def main():
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--p",
-        type=str,
-        required=True,
-    )
-    parser.add_argument(
-        "--o",
-        type=str,
-        required=True,
-    )
-    parser.add_argument(
-        "--s",
-        type=str,
-        default="train",
-    )
-    args = parser.parse_args()
-
     with open(args.p + "/config.json", "r") as f:
         config = json.load(f)
 
