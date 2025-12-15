@@ -11,6 +11,11 @@ def main():
         required=True,
     )
     parser.add_argument(
+        "--n",
+        type=str,
+        required=True,
+    )
+    parser.add_argument(
         "--s",
         type=str,
         default="train",
@@ -19,16 +24,13 @@ def main():
 
     ds = load_dataset(
         "parquet",
-        data_files=args.p + "/data/" + args.s + "*.parquet",
+        data_files=args.p + "/data/" + args.n + "*.parquet",
         split=args.s,
-        cache_dir="./cache_datasets",
     )
 
     pprint(ds)
     pprint("---------------------------------------------")
-    for i in range(5):
-        pprint(ds[i])
-        pprint("---------------------------------------------")
+    pprint(ds[0])
 
 
 if __name__ == "__main__":

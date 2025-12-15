@@ -1,4 +1,4 @@
-from datasets import *
+from datasets import load_dataset, Dataset
 import argparse
 import os
 import re
@@ -6,8 +6,8 @@ from PIL import Image
 import uuid
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--f", type=str, required=True)
-parser.add_argument("--o", type=str, required=True)
+parser.add_argument("--input", "--i", type=str, required=True)
+parser.add_argument("--output", "--o", type=str, required=True)
 parser.add_argument("--tmp", type=str, required=False)
 args = parser.parse_args()
 
@@ -59,47 +59,42 @@ def crop_image(image_path: str, box: list, save_dir: str = "./tmp") -> str:
     return save_path
 
 
-# 根据需求修改
 def process(sample, i):
     records = []
-    # if sample["imageId"] is None:
-    #     return {"records": []}
-    # if sample["box"] is None:
-    #     return {"records": []}
-    # if sample["expression"] is None:
-    #     return {"records": []}
-    # qry_image_path = f"./my_datasets/gqa/images/{sample['imageId']}.jpg"
-    # record["qry"] = (
-    #     f"<|image_pad|>\nSelect the portion of the image that follows the language expressions. {sample['expression']}"
-    # )
-    # record["pos_text"] = ""
-    # pos_image_path = crop_image(
-    #     qry_image_path, sample["box"], "./my_datasets/cops-ref/posimages/"
-    # )
-    # if pos_image_path is None:
-    #     return {"records": []}
-    # record["pos_image_path"] = pos_image_path
-    # record["qry_image_path"] = qry_image_path
-    # records.append(record)
-    imageID = sample["key"]
-    image_path = f"./my_datasets/visualgenome/images/{imageID}.jpg"
-    objects = sample["value"]
-    for objectID, box in objects:
-        expression_key = imageID + "_" + str(objectID)
-        record = {}
+    record = {}
+    ##根据需求修改########################################################
 
+    record["qry"] = (
+        "<|image_pad|>\nRepresent the given image with the following question. "
+        + sample["question_string"]
+    )
+    record["qry_image_path"] = sample["image_index"] + ".png"
+    record["pos_text"] = sample["answer"]
+    record["pos_image_path"] = ""
+
+    # record["qry"] = (
+    #     "<|image_pad|>\nRepresent the given image with the following question. "
+    #     + sample["question"]
+    # )
+    # record["qry_image_path"] = sample["image_filename"]
+    # record["pos_text"] = sample["answer"]
+    # record["pos_image_path"] = ""
+    ####################################################################
+    records.append(record)
     return {"records": records}
 
 
 def main():
-    ds = load_dataset("json", data_files=args.f)["train"]
-    ds2 = ds.map(process, with_indices=True, num_proc=64)
+    ds = load_dataset("json", data_files=args.input, cache_dir="/mnt/nvme0/tdy/cache")[
+        "train"
+    ]
+    ds2 = ds.map(process, with_indices=True, num_proc=128)
     all_items = []
     for rec_list in ds2["records"]:
         all_items.extend(rec_list)
     ds3 = Dataset.from_list(all_items)
-    os.makedirs(os.path.dirname(args.o), exist_ok=True)
-    ds3.to_json(args.o, lines=True, force_ascii=False)
+    os.makedirs(os.path.dirname(args.output), exist_ok=True)
+    ds3.to_json(args.output, lines=True, force_ascii=False)
 
 
 if __name__ == "__main__":
