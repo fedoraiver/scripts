@@ -4,11 +4,14 @@ import os
 import re
 from PIL import Image
 import uuid
+from pathlib import Path
+import random
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--input", "--i", type=str, required=True)
 parser.add_argument("--output", "--o", type=str, required=True)
 parser.add_argument("--tmp", type=str, required=False)
+parser.add_argument("--tmp2", type=str, required=False)
 args = parser.parse_args()
 
 
