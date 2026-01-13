@@ -1,21 +1,25 @@
 from datasets import *
 import argparse
 from pprint import pprint
+from pathlib import Path
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
+        "--project",
         "--p",
         type=str,
         required=True,
     )
     parser.add_argument(
+        "--name",
         "--n",
         type=str,
         required=True,
     )
     parser.add_argument(
+        "--split",
         "--s",
         type=str,
         default="train",
@@ -24,8 +28,8 @@ def main():
 
     ds = load_dataset(
         "parquet",
-        data_files=args.p + "/data/" + args.n + "*.parquet",
-        split=args.s,
+        data_files=str(Path(args.project) / "data" / f"{args.name}*.parquet"),
+        split=args.split,
     )
 
     pprint(ds)
