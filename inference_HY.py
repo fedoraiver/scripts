@@ -31,3 +31,12 @@ def run_chat(
     output_text = tokenizer.decode(outputs[0])
 
     return output_text
+
+
+prompt = [
+    {
+        "role": "user",
+        "content": "Translate the following segment into Spanish, without additional explanation.\n\n当前交易不支持花呗付款怎么回事",
+    },
+]
+print(run_chat(prompt))
