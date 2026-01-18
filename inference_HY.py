@@ -5,22 +5,10 @@ import torch_npu
 
 def run_chat(
     messages: list[dict],
-    model_name_or_path: str = "/mnt/nvme0/tdy/HY",
+    model_name_or_path: str = "/mnt/nvme0/tdy/my_models/HY",
     device: str = "npu",
     max_new_tokens: int = 2048,
 ):
-    """
-    Run chat-style generation with a causal LM.
-
-    Args:
-        model_name_or_path: local path or HF repo
-        messages: list of {"role": ..., "content": ...}
-        device: "cpu" | "cuda" | "npu"
-        max_new_tokens: generation length
-
-    Returns:
-        output_text: decoded model output
-    """
     tokenizer = AutoTokenizer.from_pretrained(model_name_or_path)
 
     model = AutoModelForCausalLM.from_pretrained(model_name_or_path)
