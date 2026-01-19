@@ -1,14 +1,18 @@
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from datasets import load_dataset, Dataset
 import torch
-import torch_npu
 from torch.nn.utils.rnn import pad_sequence
-from tvm_ffi import device
+import argparse
+import json
+from pathlib import Path
 
-model_name_or_path = "/mnt/nvme0/tdy/my_models/HY"
+
+batch_size = 32
 device = "npu"
+model_name_or_path = "/mnt/nvme0/tdy/my_models/HY"
+
 tokenizer = AutoTokenizer.from_pretrained(model_name_or_path, padding_side="left")
 tokenizer.pad_token = tokenizer.eos_token
-
 model = AutoModelForCausalLM.from_pretrained(
     model_name_or_path,
 )
@@ -18,7 +22,7 @@ model.eval()
 
 def run_chat_batch(
     batch_messages: list[list[dict]],
-    max_new_tokens: int = 2048,
+    max_new_tokens: int = 4096,
 ):
 
     # ===== 1. 每个对话单独 apply_chat_template =====
@@ -67,84 +71,72 @@ def run_chat_batch(
     return results
 
 
-batch_messages = [
-    [
-        {
-            "role": "user",
-            "content": "Translate the following segment into Spanish, without additional explanation.\n\n还款还清了，为什么花呗账单显示还要还款",
-        },
-    ],
-    [
-        {
-            "role": "user",
-            "content": "Translate the following segment into Spanish, without additional explanation.\n\n当前交易不支持花呗付款怎么回事",
-        },
-    ],
-    [
-        {
-            "role": "user",
-            "content": "Translate the following segment into Spanish, without additional explanation.\n\n花呗分期是从什么时候开始",
-        },
-    ],
-    [
-        {
-            "role": "user",
-            "content": "Translate the following segment into Spanish, without additional explanation.\n\n昨天晚上借呗借了***，怎么还没到账",
-        },
-    ],
-    [
-        {
-            "role": "user",
-            "content": "Translate the following segment into Spanish, without additional explanation.\n\n我能查看用花呗买什么东西吗",
-        },
-    ],
-    [
-        {
-            "role": "user",
-            "content": "Translate the following segment into Spanish, without additional explanation.\n\n花呗分期提前还完不可以吗",
-        },
-    ],
-    [
-        {
-            "role": "user",
-            "content": "Translate the following segment into Spanish, without additional explanation.\n\n花呗抽天猫券放哪了",
-        },
-    ],
-    [
-        {
-            "role": "user",
-            "content": "Translate the following segment into Spanish, without additional explanation.\n\n用蚂蚁花呗缴费产生能量球吗",
-        },
-    ],
-    [
-        {
-            "role": "user",
-            "content": "Translate the following segment into Spanish, without additional explanation.\n\n为什么开不了花呗",
-        },
-    ],
-    [
-        {
-            "role": "user",
-            "content": "Translate the following segment into Spanish, without additional explanation.\n\n花呗收钱钱码关闭",
-        },
-    ],
-    [
-        {
-            "role": "user",
-            "content": "Translate the following segment into Spanish, without additional explanation.\n\n用花呗 蚂蚁森林能产生能量吗",
-        },
-    ],
-    [
-        {
-            "role": "user",
-            "content": "Translate the following segment into Spanish, without additional explanation.\n\n开通蚂蚁花呗需要多少分",
-        },
-    ],
-    [
-        {
-            "role": "user",
-            "content": "Translate the following segment into Spanish, without additional explanation.\n\n我用蚂蚁花呗确认收货的时间是不一样的，还款期限也是一样的嘛",
-        },
-    ],
-]
-print(run_chat_batch(batch_messages))
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--path",
+        "--p",
+        type=str,
+        required=True,
+    )
+    args = parser.parse_args()
+
+    kalm_path = Path(args.path)
+    for p in kalm_path.iterdir():
+        ds = load_dataset(
+            path=str(p),
+            split="train",
+        )
+
+        with open(p / Path("train.jsonl"), "w") as f_out:
+            for batch in ds.iter(batch_size=batch_size):
+                messages_batch = []
+                for sample in batch["query"]:
+                    messages = [
+                        {
+                            "role": "user",
+                            "content": "Translate the following segment into Spanish, without additional explanation.\n\n"
+                            + sample.split("Query:", 1)[1].strip(),
+                        },
+                    ]
+                    messages_batch.append(messages)
+                qry = run_chat_batch(messages_batch)
+                qry = [
+                    batch["query"][i].split("Query:", 1)[0] + "Query:" + qry[i]
+                    for i in range(len(qry))
+                ]
+
+                # messages_batch = []
+                # for i, sample in enumerate(batch["pos"]):
+                #     messages = [
+                #         {
+                #             "role": "user",
+                #             "content": "Translate the following segment into Spanish, without additional explanation.\n\n"
+                #             + sample[j],
+                #         }
+                #         for j in range(len(sample))
+                #     ]
+                #     messages_batch.append(messages)
+                # pos = run_chat_batch(messages_batch)
+
+                # messages_batch = []
+                # for i, sample in enumerate(batch["neg"]):
+                #     messages = [
+                #         {
+                #             "role": "user",
+                #             "content": "Translate the following segment into Spanish, without additional explanation.\n\n"
+                #             + sample[j],
+                #         }
+                #         for j in range(len(sample))
+                #     ]
+                #     messages_batch.append(messages)
+                # neg = run_chat_batch(messages_batch)
+
+                # ===== write =====
+                for i in range(len(qry)):
+                    item = {
+                        "query": qry[i],
+                        "pos": batch["pos"][i],
+                        "neg": batch["neg"][i],
+                    }
+                    f_out.write(json.dumps(item, ensure_ascii=False) + "\n")
