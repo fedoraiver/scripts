@@ -1,0 +1,168 @@
+from hmac import new
+from datasets import load_dataset, Dataset
+import argparse
+from pathlib import Path
+from openai import OpenAI
+import json
+
+
+MODEL = "/mnt/nvme0/tdy/my_models/HY/"
+TARGET_LANGUAGE = "Spanish"
+language_table = json.load(
+    open(
+        "/mnt/nvme0/tdy/my_datasets/KaLM-embedding-finetuning-data/support_language.json",
+        "r",
+    )
+)
+dataset_table = json.load(
+    open(
+        "/mnt/nvme0/tdy/my_datasets/KaLM-embedding-finetuning-data/stat.json",
+        "r",
+    )
+)
+client1 = OpenAI(
+    base_url="http://localhost:8001/v1",
+    api_key="EMPTY",
+)
+client2 = OpenAI(
+    base_url="http://localhost:8002/v1",
+    api_key="EMPTY",
+)
+client3 = OpenAI(
+    base_url="http://localhost:8003/v1",
+    api_key="EMPTY",
+)
+client4 = OpenAI(
+    base_url="http://localhost:8004/v1",
+    api_key="EMPTY",
+)
+
+
+def contains_chinese(s: str) -> bool:
+    return any("\u4e00" <= ch <= "\u9fff" for ch in s[:20])
+
+
+def translate(content: str, target_language: str) -> str:
+    system_prompt_other = f"Translate the following segment into {target_language}, without additional explanation."
+    system_prompt_zh = f"将以下文本翻译为{language_table[target_language]}，注意只需要输出翻译后的结果，不要额外解释："
+
+    client = None
+    length = len(content)
+    if length < 1365:
+        client = client1
+    elif length < 5461:
+        client = client2
+    elif length < 21845:
+        client = client3
+    else:
+        client = client4
+
+    resp = client.chat.completions.create(
+        model=MODEL,
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    system_prompt_zh
+                    if contains_chinese(content)
+                    else system_prompt_other
+                ),
+            },
+            {"role": "user", "content": content},
+        ],
+        extra_body={
+            "max_tokens": length * 2,
+            "top_k": 20,
+            "repetition_penalty": 1.05,
+            "temperature": 0.7,
+            "top_p": 0.6,
+        },
+    )
+
+    return resp.choices[0].message.content
+
+
+def process(sample: dict[str, str | list[str]], idx):
+    records = []
+    record = sample
+    ##根据需求修改########################################################
+    record["query"] = (
+        record["query"].split("Query:", 1)[0]
+        + "Query: "
+        + translate(record["query"].split("Query:", 1)[1].strip(), TARGET_LANGUAGE)
+    )
+    records.append(record)
+
+    new_pos = []
+    for pos_passage in record["pos"]:
+        new_pos.append(translate(pos_passage, TARGET_LANGUAGE))
+    record["pos"] = new_pos
+
+    new_neg = []
+    for neg_passage in record["neg"]:
+        new_neg.append(translate(neg_passage, TARGET_LANGUAGE))
+    record["neg"] = new_neg
+
+    return {"records": records}
+
+
+def stat_max_len(example):
+    max_q = len(example["query"])
+    max_p = max(len(x) for x in example["pos"]) if example["pos"] else 0
+    max_n = max(len(x) for x in example["neg"]) if example["neg"] else 0
+    return {
+        "max_q": max_q,
+        "max_p": max_p,
+        "max_n": max_n,
+    }
+
+
+if __name__ == "__main__":
+    argparser = argparse.ArgumentParser()
+    argparser.add_argument(
+        "--path",
+        "--p",
+        type=str,
+        required=True,
+    )
+    argparser.add_argument("--output", "--o", type=str)
+    args = argparser.parse_args()
+
+    kalm_path = Path(args.path)
+
+    results = {}
+    for p in kalm_path.iterdir():
+        if not p.is_dir():
+            continue
+        if p.name.startswith("."):
+            continue
+
+        print("Processing dataset:", p.name)
+        print(dataset_table[p.name])
+        ds = load_dataset(path=str(p), split="train")
+
+        # stats = ds.map(
+        #     stat_max_len,
+        #     num_proc=512,
+        # )
+        # max_query_len = max(stats["max_q"])
+        # max_pos_len = max(stats["max_p"])
+        # max_neg_len = max(stats["max_n"])
+        # results[p.name] = {
+        #     "max_query_len": max_query_len,
+        #     "max_pos_len": max_pos_len,
+        #     "max_neg_len": max_neg_len,
+        #     "num_samples": len(ds),
+        # }
+        # print(results[p.name])
+        # print("-------------------------------------------------------")
+        # with open(file=args.output, mode="w", encoding="utf-8") as f:
+        #     json.dump(results, f, ensure_ascii=False, indent=2)
+
+        ds1 = ds.map(process, with_indices=True, num_proc=512)
+        all_items = []
+        for rec_list in ds1["records"]:
+            all_items.extend(rec_list)
+        ds2 = Dataset.from_list(all_items)
+        ds2.to_json(str(p / Path("train.jsonl")), lines=True, force_ascii=False)
+        print("-------------------------------------------------------")
