@@ -13,12 +13,6 @@ def main():
         required=True,
     )
     parser.add_argument(
-        "--name",
-        "--n",
-        type=str,
-        required=True,
-    )
-    parser.add_argument(
         "--split",
         "--s",
         type=str,
@@ -27,8 +21,7 @@ def main():
     args = parser.parse_args()
 
     ds = load_dataset(
-        "parquet",
-        data_files=str(Path(args.project) / "data" / f"{args.name}*.parquet"),
+        path=str(Path(args.project)),
         split=args.split,
     )
 

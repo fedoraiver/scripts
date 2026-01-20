@@ -1,5 +1,3 @@
 {
-  "executionEnvironments": [
-    { "root": ".", "extraPaths": ["/mnt/nvme0/tdy/repos/vllm"] }
-  ]
+  "executionEnvironments": []
 }

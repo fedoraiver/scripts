@@ -1,6 +1,4 @@
-from vllm.entrypoints.llm import LLM
-from vllm.sampling_params import SamplingParams
-
+from vllm import LLM, SamplingParams
 
 prompts = [
     "Hello, my name is",
