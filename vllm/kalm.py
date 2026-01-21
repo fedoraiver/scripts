@@ -2,12 +2,15 @@ from hmac import new
 from datasets import load_dataset, Dataset
 import argparse
 from pathlib import Path
+import httpx
 from openai import OpenAI
 import json
 
 
-MODEL = "/mnt/nvme0/tdy/my_models/HY/"
+MODEL = "HY"
 TARGET_LANGUAGE = "Spanish"
+CURRENT_DATASET = None
+
 language_table = json.load(
     open(
         "/mnt/nvme0/tdy/my_datasets/KaLM-embedding-finetuning-data/support_language.json",
@@ -20,21 +23,26 @@ dataset_table = json.load(
         "r",
     )
 )
+
 client1 = OpenAI(
     base_url="http://localhost:8001/v1",
     api_key="EMPTY",
+    http_client=httpx.Client(timeout=httpx.Timeout(3000.0)),
 )
 client2 = OpenAI(
     base_url="http://localhost:8002/v1",
     api_key="EMPTY",
+    http_client=httpx.Client(timeout=httpx.Timeout(3000.0)),
 )
 client3 = OpenAI(
     base_url="http://localhost:8003/v1",
     api_key="EMPTY",
+    http_client=httpx.Client(timeout=httpx.Timeout(3000.0)),
 )
 client4 = OpenAI(
     base_url="http://localhost:8004/v1",
     api_key="EMPTY",
+    http_client=httpx.Client(timeout=httpx.Timeout(3000.0)),
 )
 
 
@@ -42,20 +50,21 @@ def contains_chinese(s: str) -> bool:
     return any("\u4e00" <= ch <= "\u9fff" for ch in s[:20])
 
 
-def translate(content: str, target_language: str) -> str:
+def translate(content: str, target_language: str, ratio=1.0) -> str:
     system_prompt_other = f"Translate the following segment into {target_language}, without additional explanation."
     system_prompt_zh = f"将以下文本翻译为{language_table[target_language]}，注意只需要输出翻译后的结果，不要额外解释："
 
     client = None
     length = len(content)
-    if length < 1365:
-        client = client1
-    elif length < 5461:
-        client = client2
-    elif length < 21845:
-        client = client3
-    else:
-        client = client4
+
+    # if length * ratio < 2730:
+    #     client = client1
+    # elif length * ratio < 5461:
+    #     client = client2
+    # else:
+    #     client = client3
+
+    client = client1
 
     resp = client.chat.completions.create(
         model=MODEL,
@@ -89,18 +98,34 @@ def process(sample: dict[str, str | list[str]], idx):
     record["query"] = (
         record["query"].split("Query:", 1)[0]
         + "Query: "
-        + translate(record["query"].split("Query:", 1)[1].strip(), TARGET_LANGUAGE)
+        + translate(
+            record["query"].split("Query:", 1)[1].strip(),
+            TARGET_LANGUAGE,
+            10000.0 / dataset_table[CURRENT_DATASET]["max_query_len"],
+        )
     )
     records.append(record)
 
     new_pos = []
     for pos_passage in record["pos"]:
-        new_pos.append(translate(pos_passage, TARGET_LANGUAGE))
+        new_pos.append(
+            translate(
+                pos_passage,
+                TARGET_LANGUAGE,
+                10000.0 / dataset_table[CURRENT_DATASET]["max_pos_len"],
+            )
+        )
     record["pos"] = new_pos
 
     new_neg = []
     for neg_passage in record["neg"]:
-        new_neg.append(translate(neg_passage, TARGET_LANGUAGE))
+        new_neg.append(
+            translate(
+                neg_passage,
+                TARGET_LANGUAGE,
+                1000.0 / dataset_table[CURRENT_DATASET]["max_neg_len"],
+            )
+        )
     record["neg"] = new_neg
 
     return {"records": records}
@@ -137,8 +162,21 @@ if __name__ == "__main__":
         if p.name.startswith("."):
             continue
 
-        print("Processing dataset:", p.name)
         print(dataset_table[p.name])
+        if (
+            max(
+                dataset_table[p.name]["max_pos_len"],
+                dataset_table[p.name]["max_neg_len"],
+                dataset_table[p.name]["max_query_len"],
+            )
+            > 10000
+        ):
+            print("Skiping dataset due to long passages.")
+            print("-------------------------------------------------------")
+            continue
+
+        print("Processing dataset:", p.name)
+        CURRENT_DATASET = p.name
         ds = load_dataset(path=str(p), split="train")
 
         # stats = ds.map(
@@ -159,7 +197,7 @@ if __name__ == "__main__":
         # with open(file=args.output, mode="w", encoding="utf-8") as f:
         #     json.dump(results, f, ensure_ascii=False, indent=2)
 
-        ds1 = ds.map(process, with_indices=True, num_proc=512)
+        ds1 = ds.map(process, with_indices=True, num_proc=1024)
         all_items = []
         for rec_list in ds1["records"]:
             all_items.extend(rec_list)
