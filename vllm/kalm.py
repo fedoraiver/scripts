@@ -32,17 +32,17 @@ client1 = OpenAI(
 client2 = OpenAI(
     base_url="http://localhost:8002/v1",
     api_key="EMPTY",
-    http_client=httpx.Client(timeout=httpx.Timeout(3000.0)),
+    http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
 )
 client3 = OpenAI(
     base_url="http://localhost:8003/v1",
     api_key="EMPTY",
-    http_client=httpx.Client(timeout=httpx.Timeout(3000.0)),
+    http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
 )
 client4 = OpenAI(
     base_url="http://localhost:8004/v1",
     api_key="EMPTY",
-    http_client=httpx.Client(timeout=httpx.Timeout(3000.0)),
+    http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
 )
 
 
@@ -162,6 +162,11 @@ if __name__ == "__main__":
         if p.name.startswith("."):
             continue
 
+        if Path(p / "train.jsonl").exists():
+            print("Dataset already processed:", p.name)
+            print("-------------------------------------------------------")
+            continue
+
         print(dataset_table[p.name])
         if (
             max(
@@ -169,7 +174,7 @@ if __name__ == "__main__":
                 dataset_table[p.name]["max_neg_len"],
                 dataset_table[p.name]["max_query_len"],
             )
-            > 10000
+            > 1365
         ):
             print("Skiping dataset due to long passages.")
             print("-------------------------------------------------------")
