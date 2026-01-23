@@ -23,11 +23,12 @@ def main():
     ds = load_dataset(
         path=str(Path(args.project)),
         split=args.split,
+        cache_dir="/mnt/nvme0/tdy/cache_datasets",
     )
 
     pprint(ds)
     pprint("---------------------------------------------")
-    pprint(ds[0])
+    pprint(ds[777])
 
 
 if __name__ == "__main__":
