@@ -1,4 +1,3 @@
-from hmac import new
 from datasets import load_dataset, Dataset
 import argparse
 from pathlib import Path
@@ -27,7 +26,7 @@ dataset_table = json.load(
 client1 = OpenAI(
     base_url="http://localhost:8001/v1",
     api_key="EMPTY",
-    http_client=httpx.Client(timeout=httpx.Timeout(3000.0)),
+    http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
 )
 client2 = OpenAI(
     base_url="http://localhost:8002/v1",
@@ -54,17 +53,8 @@ def translate(content: str, target_language: str, ratio=1.0) -> str:
     system_prompt_other = f"Translate the following segment into {target_language}, without additional explanation."
     system_prompt_zh = f"将以下文本翻译为{language_table[target_language]}，注意只需要输出翻译后的结果，不要额外解释："
 
-    client = None
+    client = client2
     length = len(content)
-
-    # if length * ratio < 2730:
-    #     client = client1
-    # elif length * ratio < 5461:
-    #     client = client2
-    # else:
-    #     client = client3
-
-    client = client1
 
     resp = client.chat.completions.create(
         model=MODEL,
@@ -174,15 +164,25 @@ if __name__ == "__main__":
                 dataset_table[p.name]["max_neg_len"],
                 dataset_table[p.name]["max_query_len"],
             )
-            > 1365
+            <= 1365
+            or max(
+                dataset_table[p.name]["max_pos_len"],
+                dataset_table[p.name]["max_neg_len"],
+                dataset_table[p.name]["max_query_len"],
+            )
+            > 5461
         ):
-            print("Skiping dataset due to long passages.")
+            print("Skiping dataset due to length:", p.name)
             print("-------------------------------------------------------")
             continue
 
         print("Processing dataset:", p.name)
         CURRENT_DATASET = p.name
-        ds = load_dataset(path=str(p), split="train")
+        ds = load_dataset(
+            path=str(p),
+            split="train",
+            cache_dir="/mnt/nvme0/tdy/cache_datasets",
+        )
 
         # stats = ds.map(
         #     stat_max_len,
@@ -202,10 +202,14 @@ if __name__ == "__main__":
         # with open(file=args.output, mode="w", encoding="utf-8") as f:
         #     json.dump(results, f, ensure_ascii=False, indent=2)
 
-        ds1 = ds.map(process, with_indices=True, num_proc=1024)
-        all_items = []
-        for rec_list in ds1["records"]:
-            all_items.extend(rec_list)
-        ds2 = Dataset.from_list(all_items)
-        ds2.to_json(str(p / Path("train.jsonl")), lines=True, force_ascii=False)
+        ds1 = ds.map(
+            process,
+            with_indices=True,
+            num_proc=1024,
+            load_from_cache_file=False,
+        )
+        with open(str(p / Path("train_test.jsonl")), "w", encoding="utf-8") as f:
+            for rec_list in ds1["records"]:
+                for rec in rec_list:
+                    f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         print("-------------------------------------------------------")
