@@ -20,6 +20,12 @@ def main():
     )
     args = parser.parse_args()
 
+    # ds = load_dataset(
+    #     path="parquet",
+    #     data_files=str(Path(args.project)) + "/*.parquet",
+    #     split=args.split,
+    #     cache_dir="/mnt/nvme0/tdy/cache_datasets",
+    # )
     ds = load_dataset(
         path=str(Path(args.project)),
         split=args.split,
