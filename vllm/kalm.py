@@ -1,9 +1,12 @@
-from datasets import load_dataset, Dataset
+from datasets import load_dataset
+import random
 import argparse
 from pathlib import Path
 import httpx
 from openai import OpenAI
 import json
+import re
+from typing import List
 
 
 MODEL = "HY"
@@ -33,16 +36,53 @@ client2 = OpenAI(
     api_key="EMPTY",
     http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
 )
-client3 = OpenAI(
-    base_url="http://localhost:8003/v1",
-    api_key="EMPTY",
-    http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
-)
-client4 = OpenAI(
-    base_url="http://localhost:8004/v1",
-    api_key="EMPTY",
-    http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
-)
+clients = [client1, client2]
+
+
+def split_text_into_chunks(text: str, max_len: int = 5461) -> List[str]:
+    """
+    将任意语言长文本分成多个 chunk，每个 chunk长度 <= max_len，
+    尽量保持句子完整和顺序，使用标点正则分句。
+
+    Args:
+        text: str, 输入长文本
+        max_len: int, chunk 最大长度
+
+    Returns:
+        List[str]: 分好的 chunk 列表
+    """
+    # 1️⃣ 正则分句（中文、英文标点）
+    # 中文：。！？；   英文：.!?;  支持英文引号
+    sentence_endings = r"([。！？；!?\.])"
+    sentences = re.split(sentence_endings, text)
+    # re.split 会保留分隔符在单独元素，需要合并
+    merged_sentences = []
+    i = 0
+    while i < len(sentences):
+        s = sentences[i].strip()
+        if i + 1 < len(sentences) and re.match(sentence_endings, sentences[i + 1]):
+            s += sentences[i + 1].strip()
+            i += 1
+        if s:
+            merged_sentences.append(s)
+        i += 1
+
+    # 2️⃣ 累加句子生成 chunk
+    chunks = []
+    current_chunk = ""
+    for sent in merged_sentences:
+        if len(current_chunk) + len(sent) + 1 > max_len:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            current_chunk = sent
+        else:
+            current_chunk = current_chunk + " " + sent if current_chunk else sent
+
+    # 3️⃣ 添加最后一个 chunk
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+
+    return chunks
 
 
 def contains_chinese(s: str) -> bool:
@@ -53,7 +93,7 @@ def translate(content: str, target_language: str, ratio=1.0) -> str:
     system_prompt_other = f"Translate the following segment into {target_language}, without additional explanation."
     system_prompt_zh = f"将以下文本翻译为{language_table[target_language]}，注意只需要输出翻译后的结果，不要额外解释："
 
-    client = client2
+    client = random.choice(clients)
     length = len(content)
 
     resp = client.chat.completions.create(
@@ -85,51 +125,29 @@ def process(sample: dict[str, str | list[str]], idx):
     records = []
     record = sample
     ##根据需求修改########################################################
-    record["query"] = (
-        record["query"].split("Query:", 1)[0]
-        + "Query: "
-        + translate(
-            record["query"].split("Query:", 1)[1].strip(),
-            TARGET_LANGUAGE,
-            10000.0 / dataset_table[CURRENT_DATASET]["max_query_len"],
-        )
-    )
+
+    prefix, query_text = record["query"].split("Query:", 1)
+    query_text = query_text.strip()
+    chunks = split_text_into_chunks(query_text)
+    translated_chunks = [translate(chunk, TARGET_LANGUAGE) for chunk in chunks]
+    record["query"] = prefix + "Query: " + " ".join(translated_chunks)
     records.append(record)
 
     new_pos = []
     for pos_passage in record["pos"]:
-        new_pos.append(
-            translate(
-                pos_passage,
-                TARGET_LANGUAGE,
-                10000.0 / dataset_table[CURRENT_DATASET]["max_pos_len"],
-            )
-        )
+        chunks = split_text_into_chunks(pos_passage)
+        translated_chunks = [translate(chunk, TARGET_LANGUAGE) for chunk in chunks]
+        new_pos.append(" ".join(translated_chunks))
     record["pos"] = new_pos
 
     new_neg = []
     for neg_passage in record["neg"]:
-        new_neg.append(
-            translate(
-                neg_passage,
-                TARGET_LANGUAGE,
-                1000.0 / dataset_table[CURRENT_DATASET]["max_neg_len"],
-            )
-        )
+        chunks = split_text_into_chunks(neg_passage)
+        translated_chunks = [translate(chunk, TARGET_LANGUAGE) for chunk in chunks]
+        new_neg.append(" ".join(translated_chunks))
     record["neg"] = new_neg
 
     return {"records": records}
-
-
-def stat_max_len(example):
-    max_q = len(example["query"])
-    max_p = max(len(x) for x in example["pos"]) if example["pos"] else 0
-    max_n = max(len(x) for x in example["neg"]) if example["neg"] else 0
-    return {
-        "max_q": max_q,
-        "max_p": max_p,
-        "max_n": max_n,
-    }
 
 
 if __name__ == "__main__":
@@ -147,6 +165,10 @@ if __name__ == "__main__":
 
     results = {}
     for p in kalm_path.iterdir():
+        # testing only process lima-chinese
+        # if p.name != "lima-chinese":
+        #     continue
+
         if not p.is_dir():
             continue
         if p.name.startswith("."):
@@ -158,49 +180,15 @@ if __name__ == "__main__":
             continue
 
         print(dataset_table[p.name])
-        if (
-            max(
-                dataset_table[p.name]["max_pos_len"],
-                dataset_table[p.name]["max_neg_len"],
-                dataset_table[p.name]["max_query_len"],
-            )
-            <= 1365
-            or max(
-                dataset_table[p.name]["max_pos_len"],
-                dataset_table[p.name]["max_neg_len"],
-                dataset_table[p.name]["max_query_len"],
-            )
-            > 5461
-        ):
-            print("Skiping dataset due to length:", p.name)
-            print("-------------------------------------------------------")
-            continue
 
         print("Processing dataset:", p.name)
         CURRENT_DATASET = p.name
         ds = load_dataset(
-            path=str(p),
+            path="parquet",
+            data_files=str(p) + "/*.parquet",
             split="train",
             cache_dir="/mnt/nvme0/tdy/cache_datasets",
         )
-
-        # stats = ds.map(
-        #     stat_max_len,
-        #     num_proc=512,
-        # )
-        # max_query_len = max(stats["max_q"])
-        # max_pos_len = max(stats["max_p"])
-        # max_neg_len = max(stats["max_n"])
-        # results[p.name] = {
-        #     "max_query_len": max_query_len,
-        #     "max_pos_len": max_pos_len,
-        #     "max_neg_len": max_neg_len,
-        #     "num_samples": len(ds),
-        # }
-        # print(results[p.name])
-        # print("-------------------------------------------------------")
-        # with open(file=args.output, mode="w", encoding="utf-8") as f:
-        #     json.dump(results, f, ensure_ascii=False, indent=2)
 
         ds1 = ds.map(
             process,
@@ -208,7 +196,7 @@ if __name__ == "__main__":
             num_proc=1024,
             load_from_cache_file=False,
         )
-        with open(str(p / Path("train_test.jsonl")), "w", encoding="utf-8") as f:
+        with open(str(p / Path("train.jsonl")), "w", encoding="utf-8") as f:
             for rec_list in ds1["records"]:
                 for rec in rec_list:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
