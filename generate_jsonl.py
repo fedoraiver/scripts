@@ -1,4 +1,5 @@
 from datasets import load_dataset, Dataset
+from pathlib import Path
 import os
 import argparse
 import json
@@ -25,8 +26,8 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
-with open(args.path + "/config.json", "r") as f:
-    config = json.load(f)
+# with open(args.path + "/config.json", "r") as f:
+#     config = json.load(f)
 
 
 def render(s, context):
@@ -36,27 +37,31 @@ def render(s, context):
 # 处理函数: 每个数据集都不一样,需要按需修改
 def process(sample, i):
     records = []
-    for qa_pair in sample["qa"]:
-        context = {
-            "i": i,
-            "sample": qa_pair,
-            "config": config,
-        }
-
-        record = {
-            key: render(value, context) for key, value in config["record"].items()
-        }
-        records.append(record)
+    record = {
+        # "query_id": i,
+        # "chunk_id": sample["chunk_id"],
+        # "extra": 1,
+        # "id": i,
+        # "text": sample["query"],
+        "id": sample["chunk_id"],
+        "text": sample["chunk"],
+    }
+    records.append(record)
     return {"records": records}
 
 
 def main():
 
     ds = load_dataset(
-        "parquet",
-        data_files=args.path + "/data/" + args.split + "*.parquet",
+        path=str(Path(args.path)),
         split=args.split,
+        cache_dir="/mnt/nvme0/tdy/cache_datasets",
     )
+    # ds = load_dataset(
+    #     "parquet",
+    #     data_files=args.path + "/data/" + args.split + "*.parquet",
+    #     split=args.split,
+    # )
 
     ds2 = ds.map(
         process,
