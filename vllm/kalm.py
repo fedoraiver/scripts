@@ -5,6 +5,7 @@ from pathlib import Path
 import httpx
 from openai import OpenAI
 import json
+import sys
 import re
 from typing import List
 
@@ -83,27 +84,32 @@ def translate(content: str, target_language: str, client, ratio=1.0) -> str:
 
     length = len(content)
 
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=[
-            {
-                "role": "system",
-                "content": (
-                    system_prompt_zh
-                    if contains_chinese(content)
-                    else system_prompt_other
-                ),
+    try:
+        resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        system_prompt_zh
+                        if contains_chinese(content)
+                        else system_prompt_other
+                    ),
+                },
+                {"role": "user", "content": content},
+            ],
+            extra_body={
+                "max_tokens": length * 2,
+                "top_k": 20,
+                "repetition_penalty": 1.05,
+                "temperature": 0.7,
+                "top_p": 0.6,
             },
-            {"role": "user", "content": content},
-        ],
-        extra_body={
-            "max_tokens": length * 2,
-            "top_k": 20,
-            "repetition_penalty": 1.05,
-            "temperature": 0.7,
-            "top_p": 0.6,
-        },
-    )
+        )
+    except Exception as e:
+        # Avoid non-picklable exceptions breaking multiprocessing
+        print(f"[translate] failed: {type(e).__name__}: {e}", file=sys.stderr)
+        return content
 
     return resp.choices[0].message.content
 
