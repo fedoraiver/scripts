@@ -8,7 +8,7 @@ import json
 import sys
 import re
 from typing import List
-
+from utils import *
 
 MODEL = "HY"
 TARGET_LANGUAGE = "Spanish"
@@ -28,7 +28,7 @@ dataset_table = json.load(
 )
 
 
-def split_text_into_chunks(text: str, max_len: int = 2730) -> List[str]:
+def split_text_into_chunks(text: str, max_len: int = 2666) -> List[str]:
     """
     将任意语言长文本分成多个 chunk，每个 chunk长度 <= max_len，
     尽量保持句子完整和顺序，使用标点正则分句。
@@ -40,7 +40,7 @@ def split_text_into_chunks(text: str, max_len: int = 2730) -> List[str]:
     Returns:
         List[str]: 分好的 chunk 列表
     """
-    # 1️⃣ 正则分句（中文、英文标点）
+    # 正则分句（中文、英文标点）
     # 中文：。！？；   英文：.!?;  支持英文引号
     sentence_endings = r"([。！？；!?\.])"
     sentences = re.split(sentence_endings, text)
@@ -60,6 +60,17 @@ def split_text_into_chunks(text: str, max_len: int = 2730) -> List[str]:
     chunks = []
     current_chunk = ""
     for sent in merged_sentences:
+        # 处理单句超长：先把已有 chunk 落盘，再把该句按 max_len 硬切分
+        if len(sent) > max_len:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = ""
+            for i in range(0, len(sent), max_len):
+                piece = sent[i : i + max_len].strip()
+                if piece:
+                    chunks.append(piece)
+            continue
+
         if len(current_chunk) + len(sent) + 1 > max_len:
             if current_chunk:
                 chunks.append(current_chunk.strip())
@@ -162,7 +173,7 @@ def process(sample: dict[str, str | list[str]], idx):
     return {"records": records}
 
 
-if __name__ == "__main__":
+def main():
     argparser = argparse.ArgumentParser()
     argparser.add_argument(
         "--path",
@@ -201,7 +212,7 @@ if __name__ == "__main__":
         ds1 = ds.map(
             process,
             with_indices=True,
-            num_proc=1024,
+            num_proc=DEFAULT_NUM_PROCS - 100,
             load_from_cache_file=False,
         )
         with open(str(p / Path("train.jsonl")), "w", encoding="utf-8") as f:
@@ -209,3 +220,8 @@ if __name__ == "__main__":
                 for rec in rec_list:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         print("-------------------------------------------------------")
+
+
+if __name__ == "__main__":
+    main()
+    print("✅ done")

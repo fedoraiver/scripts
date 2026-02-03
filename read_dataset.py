@@ -1,13 +1,15 @@
-from datasets import *
+from datasets import load_dataset
 import argparse
 from pprint import pprint
 from pathlib import Path
+
+from utils import *
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--project",
+        "--path",
         "--p",
         type=str,
         required=True,
@@ -25,23 +27,12 @@ def main():
     )
     args = parser.parse_args()
 
-    # ds = load_dataset(
-    #     path="parquet",
-    #     data_files=str(Path(args.project)) + "/*.parquet",
-    #     split=args.split,
-    #     cache_dir="/mnt/nvme0/tdy/cache_datasets",
-    # )
-    # ds = load_dataset(
-    #     path=str(Path(args.project)),
-    #     name=args.name,
-    #     split=args.split,
-    #     cache_dir="/mnt/nvme0/tdy/cache_datasets",
-    # )
+    # 按需更改
     ds = load_dataset(
         "json",
-        data_files=str(Path(args.project) / Path(args.split + ".jsonl.gz")),
-        split="train",
-        cache_dir="/mnt/nvme0/tdy/cache_datasets",
+        data_files=str(Path(args.path) / Path(args.split + ".jsonl.gz")),
+        split=args.split,
+        cache_dir=DEFAULT_CACHE_DIR,
     )
 
     pprint(ds)

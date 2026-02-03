@@ -6,7 +6,6 @@ import argparse
 import json
 from pathlib import Path
 
-
 batch_size = 32
 device = "npu"
 model_name_or_path = "/mnt/nvme0/tdy/my_models/HY"
@@ -71,7 +70,7 @@ def run_chat_batch(
     return results
 
 
-if __name__ == "__main__":
+def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--path",
@@ -140,3 +139,8 @@ if __name__ == "__main__":
                         "neg": batch["neg"][i],
                     }
                     f_out.write(json.dumps(item, ensure_ascii=False) + "\n")
+
+
+if __name__ == "__main__":
+    main()
+    print("✅ done")

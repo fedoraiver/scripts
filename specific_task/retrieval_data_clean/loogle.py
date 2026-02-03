@@ -1,9 +1,11 @@
-from datasets import load_dataset, Dataset
 from pathlib import Path
 import argparse
 import json
 from split import *
 from typing import Dict, Union
+
+from datasets import load_dataset
+from utils import *
 
 
 def export_qrels_jsonl(qrels: Dict[str, List[str]], output_path: Union[str, Path]):
@@ -52,53 +54,49 @@ def export_corpus_jsonl(corpus: dict, output_path: Union[str, Path]):
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    "--path",
-    "--p",
-    type=str,
-    required=True,
-)
-parser.add_argument(
-    "--name",
-    "--n",
-    type=str,
-)
-parser.add_argument(
-    "--split",
-    "--s",
-    type=str,
-    default="train",
-)
-args = parser.parse_args()
-
-
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--path",
+        "--p",
+        type=str,
+        required=True,
+    )
+    parser.add_argument(
+        "--name",
+        "--n",
+        type=str,
+    )
+    parser.add_argument(
+        "--split",
+        "--s",
+        type=str,
+        default="train",
+    )
+    args = parser.parse_args()
 
     ds = load_dataset(
         path=str(Path(args.path)),
         name=args.name,
         split=args.split,
-        cache_dir="/mnt/nvme0/tdy/cache_datasets",
+        cache_dir=DEFAULT_CACHE_DIR,
     )
-    # ds = load_dataset(
-    #     "parquet",
-    #     data_files=args.path + "/data/" + args.split + "*.parquet",
-    #     split=args.split,
-    # )
 
-    # {
-    # "context": "The original long input texts",
-    # "title": "The title of the given document",  //for arxiv paper, we use "title" to refer the identical ID for specific paper
-    # "question": "Question to ask based on the given input",
-    # "answer": "Groundtruth answer for the question", // for short dependency cloze, the answer is a list ordered by <mask-0>, <mask-1>, ...
-    # "evidence": [ "One or more evidence (complete sentences) for answering the question, which are extracted directly from the original input"
-    # ],
-    # "metadata": "Metadata for the context",
-    # "task": "The task for the question answer",
-    # "doc_id": "The document ID",
-    # "id": "The task id"
-    # }
+    """
+        {
+          "context": "The original long input texts",
+          "title": "The title of the given document",       //for arxiv paper, we use "title" to refer the identical ID for specific paper
+          "question": "Question to ask based on the given input",
+          "answer": "Groundtruth answer for the question",  // for short dependency cloze, the answer is a list ordered by <mask-0>, <mask-1>, ...
+          "evidence": [
+            "One or more evidence (complete sentences) for answering the question, which are extracted directly from the original input"
+          ],
+          "metadata": "Metadata for the context",
+          "task": "The task for the question answer",
+          "doc_id": "The document ID",
+          "id": "The task id"
+        }
+    """
 
     corpus = {}
     queries = {}

@@ -1,23 +1,21 @@
 import json
 import argparse
 
-parser = argparse.ArgumentParser()
-parser.add_argument(
-    "--input",
-    "--i",
-    type=str,
-    required=True,
-)
-parser.add_argument(
-    "--output",
-    "--o",
-    type=str,
-    required=True,
-)
-args = parser.parse_args()
-
-
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--input",
+        "--i",
+        type=str,
+        required=True,
+    )
+    parser.add_argument(
+        "--output",
+        "--o",
+        type=str,
+        required=True,
+    )
+    args = parser.parse_args()
 
     with open(args.input, "r", encoding="utf-8") as json_file:
         # 需要实际根据 JSON 结构调整此行
