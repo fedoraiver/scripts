@@ -26,20 +26,8 @@ dataset_table = json.load(
     )
 )
 
-client1 = OpenAI(
-    base_url="http://localhost:8001/v1",
-    api_key="EMPTY",
-    http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
-)
-client2 = OpenAI(
-    base_url="http://localhost:8002/v1",
-    api_key="EMPTY",
-    http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
-)
-clients = [client1, client2]
 
-
-def split_text_into_chunks(text: str, max_len: int = 5461) -> List[str]:
+def split_text_into_chunks(text: str, max_len: int = 2730) -> List[str]:
     """
     将任意语言长文本分成多个 chunk，每个 chunk长度 <= max_len，
     尽量保持句子完整和顺序，使用标点正则分句。
@@ -89,11 +77,10 @@ def contains_chinese(s: str) -> bool:
     return any("\u4e00" <= ch <= "\u9fff" for ch in s[:20])
 
 
-def translate(content: str, target_language: str, ratio=1.0) -> str:
+def translate(content: str, target_language: str, client, ratio=1.0) -> str:
     system_prompt_other = f"Translate the following segment into {target_language}, without additional explanation."
     system_prompt_zh = f"将以下文本翻译为{language_table[target_language]}，注意只需要输出翻译后的结果，不要额外解释："
 
-    client = random.choice(clients)
     length = len(content)
 
     resp = client.chat.completions.create(
@@ -122,28 +109,47 @@ def translate(content: str, target_language: str, ratio=1.0) -> str:
 
 
 def process(sample: dict[str, str | list[str]], idx):
+    client1 = OpenAI(
+        base_url="http://localhost:8001/v1",
+        api_key="EMPTY",
+        http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
+    )
+    client2 = OpenAI(
+        base_url="http://localhost:8002/v1",
+        api_key="EMPTY",
+        http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
+    )
+    clients = [client1, client2]
     records = []
     record = sample
-    ##根据需求修改########################################################
 
     prefix, query_text = record["query"].split("Query:", 1)
     query_text = query_text.strip()
     chunks = split_text_into_chunks(query_text)
-    translated_chunks = [translate(chunk, TARGET_LANGUAGE) for chunk in chunks]
+    translated_chunks = [
+        translate(chunk, TARGET_LANGUAGE, client=random.choice(clients))
+        for chunk in chunks
+    ]
     record["query"] = prefix + "Query: " + " ".join(translated_chunks)
     records.append(record)
 
     new_pos = []
     for pos_passage in record["pos"]:
         chunks = split_text_into_chunks(pos_passage)
-        translated_chunks = [translate(chunk, TARGET_LANGUAGE) for chunk in chunks]
+        translated_chunks = [
+            translate(chunk, TARGET_LANGUAGE, client=random.choice(clients))
+            for chunk in chunks
+        ]
         new_pos.append(" ".join(translated_chunks))
     record["pos"] = new_pos
 
     new_neg = []
     for neg_passage in record["neg"]:
         chunks = split_text_into_chunks(neg_passage)
-        translated_chunks = [translate(chunk, TARGET_LANGUAGE) for chunk in chunks]
+        translated_chunks = [
+            translate(chunk, TARGET_LANGUAGE, client=random.choice(clients))
+            for chunk in chunks
+        ]
         new_neg.append(" ".join(translated_chunks))
     record["neg"] = new_neg
 
@@ -165,10 +171,6 @@ if __name__ == "__main__":
 
     results = {}
     for p in kalm_path.iterdir():
-        # testing only process lima-chinese
-        # if p.name != "lima-chinese":
-        #     continue
-
         if not p.is_dir():
             continue
         if p.name.startswith("."):
