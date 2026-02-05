@@ -50,7 +50,9 @@ def split_text_by_sentence(text: str, lang: str = "en") -> dict[int, str]:
     return chunks
 
 
-def find_evidence_chunks(evidence, chunks: dict[int, str]) -> list[int]:
+def find_evidence_chunks(
+    evidence: str | list[str], chunks: dict[int, str]
+) -> list[int]:
     """Find sentence indices that contain evidence strings."""
     if isinstance(evidence, str):
         evidence_list = [evidence]

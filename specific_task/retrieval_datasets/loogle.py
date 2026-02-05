@@ -1,7 +1,6 @@
 from pathlib import Path
 import argparse
 import json
-from split import *
 from typing import Dict, Union
 
 from datasets import load_dataset
@@ -10,7 +9,7 @@ from utils import *
 
 def export_qrels_jsonl(qrels: Dict[str, List[str]], output_path: Union[str, Path]):
     """
-    将 qrels 导出为 jsonl，每行 {"chunk_id": str, "extra": 1, "query_id": int}
+    将 qrels 导出为 jsonl，每行 {"chunk_id": list[str], "extra": 1, "query_id": int}
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -18,13 +17,12 @@ def export_qrels_jsonl(qrels: Dict[str, List[str]], output_path: Union[str, Path
     with open(output_path, "w", encoding="utf-8") as f:
         for qid_str, chunk_ids in qrels.items():
             query_id = int(qid_str)
-            for chunk_id in chunk_ids:
-                line = {
-                    "chunk_id": chunk_id,
-                    "extra": 1,  # 固定为 1
-                    "query_id": query_id,
-                }
-                f.write(json.dumps(line, ensure_ascii=False) + "\n")
+            line = {
+                "chunk_id": chunk_ids,
+                "extra": 1,  # 固定为 1
+                "query_id": query_id,
+            }
+            f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
 def export_queries_jsonl(queries: Dict[str, str], output_path: Union[str, Path]):
@@ -42,15 +40,17 @@ def export_queries_jsonl(queries: Dict[str, str], output_path: Union[str, Path])
 
 def export_corpus_jsonl(corpus: dict, output_path: Union[str, Path]):
     """
-    将 corpus 导出为 jsonl，每行 {"id": "docid_idx", "text": "chunk_text"}
+    将 corpus 导出为 jsonl，每行 {"id": "docid_idx", "title": str, "text": "chunk_text"}
     """
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(output_path, "w", encoding="utf-8") as f:
-        for doc_id, chunks in corpus.items():
+        for doc_id, doc_data in corpus.items():
+            title = doc_data["title"]
+            chunks = doc_data["chunks"]
             for chunk_id, chunk_text in chunks.items():
-                line = {"id": f"{doc_id}_{chunk_id}", "text": chunk_text}
+                line = {"id": f"{doc_id}_{chunk_id}", "title": title, "text": chunk_text}
                 f.write(json.dumps(line, ensure_ascii=False) + "\n")
 
 
@@ -98,15 +98,18 @@ def main():
         }
     """
 
-    corpus = {}
-    queries = {}
-    qrels = {}
+    corpus: dict[str, dict] = {}
+    queries: dict[str, str] = {}
+    qrels: dict[str, list[str]] = {}
     for i, sample in enumerate(ds):
         if sample["doc_id"] not in corpus:
             chunk_dict = split_text_by_sentence(sample["context"])
-            corpus[sample["doc_id"]] = chunk_dict
+            corpus[sample["doc_id"]] = {
+                "title": sample.get("title", ""),
+                "chunks": chunk_dict,
+            }
         evidence_indices = find_evidence_chunks(
-            sample["evidence"], corpus[sample["doc_id"]]
+            sample["evidence"], corpus[sample["doc_id"]]["chunks"]
         )
         queries[f"{i}"] = sample["question"]
         qrels[f"{i}"] = [f"{sample['doc_id']}_{idx}" for idx in evidence_indices]

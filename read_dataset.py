@@ -11,7 +11,7 @@ def main():
     parser.add_argument(
         "--path",
         "--p",
-        type=str,
+        type=Path,
         required=True,
     )
     parser.add_argument(
