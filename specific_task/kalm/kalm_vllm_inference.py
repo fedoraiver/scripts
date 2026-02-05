@@ -5,14 +5,26 @@ from pathlib import Path
 import httpx
 from openai import OpenAI
 import json
-import sys
 import re
 from typing import List
+
 from utils import *
 
 MODEL = "HY"
 TARGET_LANGUAGE = "Spanish"
 CURRENT_DATASET = None
+
+client1 = OpenAI(
+    base_url="http://localhost:8001/v1",
+    api_key="EMPTY",
+    http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
+)
+client2 = OpenAI(
+    base_url="http://localhost:8002/v1",
+    api_key="EMPTY",
+    http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
+)
+clients = [client1, client2]
 
 language_table = json.load(
     open(
@@ -89,10 +101,10 @@ def contains_chinese(s: str) -> bool:
     return any("\u4e00" <= ch <= "\u9fff" for ch in s[:20])
 
 
-def translate(content: str, target_language: str, client, ratio=1.0) -> str:
+def translate(content: str, target_language: str, idx, ratio=1.0) -> str:
     system_prompt_other = f"Translate the following segment into {target_language}, without additional explanation."
     system_prompt_zh = f"将以下文本翻译为{language_table[target_language]}，注意只需要输出翻译后的结果，不要额外解释："
-
+    client = random.choice(clients)
     length = len(content)
 
     try:
@@ -119,54 +131,34 @@ def translate(content: str, target_language: str, client, ratio=1.0) -> str:
         )
     except Exception as e:
         # Avoid non-picklable exceptions breaking multiprocessing
-        print(f"[translate] failed: {type(e).__name__}: {e}", file=sys.stderr)
+        print(f"line {idx} translate failed: {type(e).__name__}: {e}")
         return content
 
     return resp.choices[0].message.content
 
 
 def process(sample: dict[str, str | list[str]], idx):
-    client1 = OpenAI(
-        base_url="http://localhost:8001/v1",
-        api_key="EMPTY",
-        http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
-    )
-    client2 = OpenAI(
-        base_url="http://localhost:8002/v1",
-        api_key="EMPTY",
-        http_client=httpx.Client(timeout=httpx.Timeout(30000.0)),
-    )
-    clients = [client1, client2]
     records = []
     record = sample
 
     prefix, query_text = record["query"].split("Query:", 1)
     query_text = query_text.strip()
     chunks = split_text_into_chunks(query_text)
-    translated_chunks = [
-        translate(chunk, TARGET_LANGUAGE, client=random.choice(clients))
-        for chunk in chunks
-    ]
+    translated_chunks = [translate(chunk, TARGET_LANGUAGE, idx) for chunk in chunks]
     record["query"] = prefix + "Query: " + " ".join(translated_chunks)
     records.append(record)
 
     new_pos = []
     for pos_passage in record["pos"]:
         chunks = split_text_into_chunks(pos_passage)
-        translated_chunks = [
-            translate(chunk, TARGET_LANGUAGE, client=random.choice(clients))
-            for chunk in chunks
-        ]
+        translated_chunks = [translate(chunk, TARGET_LANGUAGE, idx) for chunk in chunks]
         new_pos.append(" ".join(translated_chunks))
     record["pos"] = new_pos
 
     new_neg = []
     for neg_passage in record["neg"]:
         chunks = split_text_into_chunks(neg_passage)
-        translated_chunks = [
-            translate(chunk, TARGET_LANGUAGE, client=random.choice(clients))
-            for chunk in chunks
-        ]
+        translated_chunks = [translate(chunk, TARGET_LANGUAGE, idx) for chunk in chunks]
         new_neg.append(" ".join(translated_chunks))
     record["neg"] = new_neg
 
@@ -181,7 +173,6 @@ def main():
         type=str,
         required=True,
     )
-    argparser.add_argument("--output", "--o", type=str)
     args = argparser.parse_args()
 
     kalm_path = Path(args.path)
@@ -213,7 +204,6 @@ def main():
             process,
             with_indices=True,
             num_proc=DEFAULT_NUM_PROCS - 100,
-            load_from_cache_file=False,
         )
         with open(str(p / Path("train.jsonl")), "w", encoding="utf-8") as f:
             for rec_list in ds1["records"]:
