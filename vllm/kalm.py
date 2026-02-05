@@ -28,7 +28,7 @@ dataset_table = json.load(
 )
 
 
-def split_text_into_chunks(text: str, max_len: int = 2730) -> List[str]:
+def split_text_into_chunks(text: str, max_len: int = 2666) -> List[str]:
     """
     将任意语言长文本分成多个 chunk，每个 chunk长度 <= max_len，
     尽量保持句子完整和顺序，使用标点正则分句。
@@ -60,6 +60,17 @@ def split_text_into_chunks(text: str, max_len: int = 2730) -> List[str]:
     chunks = []
     current_chunk = ""
     for sent in merged_sentences:
+        # 处理单句超长：先把已有 chunk 落盘，再把该句按 max_len 硬切分
+        if len(sent) > max_len:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = ""
+            for i in range(0, len(sent), max_len):
+                piece = sent[i : i + max_len].strip()
+                if piece:
+                    chunks.append(piece)
+            continue
+
         if len(current_chunk) + len(sent) + 1 > max_len:
             if current_chunk:
                 chunks.append(current_chunk.strip())
@@ -78,7 +89,7 @@ def contains_chinese(s: str) -> bool:
     return any("\u4e00" <= ch <= "\u9fff" for ch in s[:20])
 
 
-def translate(content: str, target_language: str, client, ratio=1.0) -> str:
+def translate(content: str, target_language: str, client, idx, ratio=1.0) -> str:
     system_prompt_other = f"Translate the following segment into {target_language}, without additional explanation."
     system_prompt_zh = f"将以下文本翻译为{language_table[target_language]}，注意只需要输出翻译后的结果，不要额外解释："
 
@@ -108,7 +119,7 @@ def translate(content: str, target_language: str, client, ratio=1.0) -> str:
         )
     except Exception as e:
         # Avoid non-picklable exceptions breaking multiprocessing
-        print(f"[translate] failed: {type(e).__name__}: {e}", file=sys.stderr)
+        print(f"line {idx} translate failed: {type(e).__name__}: {e}")
         return content
 
     return resp.choices[0].message.content
@@ -133,7 +144,7 @@ def process(sample: dict[str, str | list[str]], idx):
     query_text = query_text.strip()
     chunks = split_text_into_chunks(query_text)
     translated_chunks = [
-        translate(chunk, TARGET_LANGUAGE, client=random.choice(clients))
+        translate(chunk, TARGET_LANGUAGE, random.choice(clients), idx)
         for chunk in chunks
     ]
     record["query"] = prefix + "Query: " + " ".join(translated_chunks)
@@ -143,7 +154,7 @@ def process(sample: dict[str, str | list[str]], idx):
     for pos_passage in record["pos"]:
         chunks = split_text_into_chunks(pos_passage)
         translated_chunks = [
-            translate(chunk, TARGET_LANGUAGE, client=random.choice(clients))
+            translate(chunk, TARGET_LANGUAGE, random.choice(clients), idx)
             for chunk in chunks
         ]
         new_pos.append(" ".join(translated_chunks))
@@ -153,7 +164,7 @@ def process(sample: dict[str, str | list[str]], idx):
     for neg_passage in record["neg"]:
         chunks = split_text_into_chunks(neg_passage)
         translated_chunks = [
-            translate(chunk, TARGET_LANGUAGE, client=random.choice(clients))
+            translate(chunk, TARGET_LANGUAGE, random.choice(clients), idx)
             for chunk in chunks
         ]
         new_neg.append(" ".join(translated_chunks))
