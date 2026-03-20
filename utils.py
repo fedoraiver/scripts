@@ -60,13 +60,41 @@ def find_evidence_chunks(
         evidence_list = evidence
 
     matched_ids = set()
+    # Normalize all chunks once
+    chunk_items = sorted(chunks.items(), key=lambda x: x[0])
+    chunk_norm = [(idx, " ".join(text.split())) for idx, text in chunk_items]
+
     for e in evidence_list:
         e = e.strip()
         if not e:
             continue
-        for idx, text in chunks.items():
-            if e in text:
+        e_norm = " ".join(e.split())
+
+        # Prefer the smallest window that matches (1 -> 2 -> 3)
+        matched_this_evidence = False
+        # 1-sentence match
+        for idx, t_norm in chunk_norm:
+            if e_norm in t_norm:
                 matched_ids.add(idx)
+                matched_this_evidence = True
+                break
+
+        if matched_this_evidence:
+            continue
+
+        # 2-3 sentence window match (first match only)
+        for i in range(len(chunk_norm)):
+            for window in (2, 3):
+                if i + window - 1 >= len(chunk_norm):
+                    continue
+                combined = " ".join(chunk_norm[j][1] for j in range(i, i + window))
+                if e_norm in combined:
+                    for j in range(i, i + window):
+                        matched_ids.add(chunk_norm[j][0])
+                    matched_this_evidence = True
+                    break
+            if matched_this_evidence:
+                break
     return sorted(matched_ids)
 
 

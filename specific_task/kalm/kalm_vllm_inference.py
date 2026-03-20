@@ -1,5 +1,4 @@
 from datasets import load_dataset
-import random
 import argparse
 from pathlib import Path
 import httpx
@@ -7,12 +6,15 @@ from openai import OpenAI
 import json
 import re
 from typing import List
+from langdetect import detect
+from langdetect.lang_detect_exception import LangDetectException
 
 from utils import *
 
 MODEL = "HY"
 TARGET_LANGUAGE = "Spanish"
 CURRENT_DATASET = None
+RETRY_PER_CLIENT = 2
 
 client1 = OpenAI(
     base_url="http://localhost:8001/v1",
@@ -38,11 +40,17 @@ dataset_table = json.load(
         "r",
     )
 )
+error_table = json.load(
+    open(
+        "/mnt/nvme0/tdy/my_datasets/KaLM-embedding-finetuning-data/error.json",
+        "r",
+    )
+)
 
 
 def split_text_into_chunks(text: str, max_len: int = 2666) -> List[str]:
     """
-    将任意语言长文本分成多个 chunk，每个 chunk长度 <= max_len，
+    将任意语言长文本分成多个 chunk,每个 chunk长度 <= max_len
     尽量保持句子完整和顺序，使用标点正则分句。
 
     Args:
@@ -101,65 +109,104 @@ def contains_chinese(s: str) -> bool:
     return any("\u4e00" <= ch <= "\u9fff" for ch in s[:20])
 
 
+def is_spanish(text: str) -> bool:
+    try:
+        return detect(text) == "es"
+    except LangDetectException:
+        return False
+
+
 def translate(content: str, target_language: str, idx, ratio=1.0) -> str:
     system_prompt_other = f"Translate the following segment into {target_language}, without additional explanation."
     system_prompt_zh = f"将以下文本翻译为{language_table[target_language]}，注意只需要输出翻译后的结果，不要额外解释："
-    client = random.choice(clients)
+    # Split load stably by sample index, and fallback to the other endpoint on failure.
+    start = idx % len(clients)
+    client_order = clients[start:] + clients[:start]
     length = len(content)
+    # Prefer a larger budget for long chunks; if server says it's too large,
+    # we parse the error and retry with the allowed budget.
 
-    try:
-        resp = client.chat.completions.create(
-            model=MODEL,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        system_prompt_zh
-                        if contains_chinese(content)
-                        else system_prompt_other
-                    ),
-                },
-                {"role": "user", "content": content},
-            ],
-            extra_body={
-                "max_tokens": length * 2,
-                "top_k": 20,
-                "repetition_penalty": 1.05,
-                "temperature": 0.7,
-                "top_p": 0.6,
-            },
-        )
-    except Exception as e:
-        # Avoid non-picklable exceptions breaking multiprocessing
-        print(f"line {idx} translate failed: {type(e).__name__}: {e}")
-        return content
+    last_exc = None
+    for ci, client in enumerate(client_order):
+        max_completion_tokens = length * 2
+        for attempt in range(1, RETRY_PER_CLIENT + 1):
+            try:
+                resp = client.chat.completions.create(
+                    model=MODEL,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                system_prompt_zh
+                                if contains_chinese(content)
+                                else system_prompt_other
+                            ),
+                        },
+                        {"role": "user", "content": content},
+                    ],
+                    extra_body={
+                        "max_tokens": max_completion_tokens,
+                        "top_k": 20,
+                        "repetition_penalty": 1.05,
+                        "temperature": 0.7,
+                        "top_p": 0.6,
+                    },
+                )
+                return resp.choices[0].message.content
+            except Exception as e:
+                last_exc = e
+                err_name = type(e).__name__
+                if err_name == "BadRequestError":
+                    msg = str(e)
+                    m = re.search(r"\((\d+)\s*>\s*(\d+)\s*-\s*(\d+)\)", msg)
+                    if m:
+                        # allowed completion tokens ~= max_ctx - input_tokens
+                        allowed = max(64, int(m.group(2)) - int(m.group(3)) - 32)
+                        if allowed < max_completion_tokens:
+                            max_completion_tokens = allowed
+                            # Retry once immediately with smaller max_tokens.
+                            continue
+                    print(f"line {idx} translate failed: {err_name}: {e}")
+                    return content
+                if attempt < RETRY_PER_CLIENT:
+                    continue
+                print(
+                    f"line {idx} translate failed on client#{(start + ci) % len(clients) + 1} "
+                    f"attempt={attempt}: {err_name}: {e}"
+                )
+    print(f"line {idx} translate failed: {type(last_exc).__name__}: {last_exc}")
+    return content
 
-    return resp.choices[0].message.content
+
+def translate_text(text: str, idx: int) -> str:
+    chunks = split_text_into_chunks(text)
+    translated_chunks = [translate(chunk, TARGET_LANGUAGE, idx) for chunk in chunks]
+    return " ".join(translated_chunks)
+
+
+def keep_or_translate_to_spanish(text: str, idx: int) -> str:
+    if is_spanish(text):
+        return text
+    return translate_text(text, idx)
 
 
 def process(sample: dict[str, str | list[str]], idx):
     records = []
     record = sample
 
-    prefix, query_text = record["query"].split("Query:", 1)
+    prefix, query_text = record["origin_query"].split("Query:", 1)
     query_text = query_text.strip()
-    chunks = split_text_into_chunks(query_text)
-    translated_chunks = [translate(chunk, TARGET_LANGUAGE, idx) for chunk in chunks]
-    record["query"] = prefix + "Query: " + " ".join(translated_chunks)
+    record["query"] = prefix + "Query: " + keep_or_translate_to_spanish(query_text, idx)
     records.append(record)
 
     new_pos = []
-    for pos_passage in record["pos"]:
-        chunks = split_text_into_chunks(pos_passage)
-        translated_chunks = [translate(chunk, TARGET_LANGUAGE, idx) for chunk in chunks]
-        new_pos.append(" ".join(translated_chunks))
+    for pos_passage in record["origin_pos"]:
+        new_pos.append(keep_or_translate_to_spanish(pos_passage, idx))
     record["pos"] = new_pos
 
     new_neg = []
-    for neg_passage in record["neg"]:
-        chunks = split_text_into_chunks(neg_passage)
-        translated_chunks = [translate(chunk, TARGET_LANGUAGE, idx) for chunk in chunks]
-        new_neg.append(" ".join(translated_chunks))
+    for neg_passage in record["origin_neg"]:
+        new_neg.append(keep_or_translate_to_spanish(neg_passage, idx))
     record["neg"] = new_neg
 
     return {"records": records}
@@ -177,6 +224,8 @@ def main():
 
     kalm_path = Path(args.path)
 
+    datasets_with_errors = error_table.get("datasets", {})
+
     results = {}
     for p in kalm_path.iterdir():
         if not p.is_dir():
@@ -184,8 +233,20 @@ def main():
         if p.name.startswith("."):
             continue
 
-        if Path(p / "train.jsonl").exists():
-            print("Dataset already processed:", p.name)
+        # if (p / "fix5.jsonl").exists():
+        #     print("fix5.jsonl already exists, skip:", p.name)
+        #     print("-------------------------------------------------------")
+        #     continue
+
+        dataset_error_info = datasets_with_errors.get(p.name)
+        if dataset_error_info is None:
+            print("Dataset not in error.json, skip:", p.name)
+            print("-------------------------------------------------------")
+            continue
+
+        error_rows = sorted(set(dataset_error_info.get("error_rows", [])))
+        if not error_rows:
+            print("Dataset has no error_rows, skip:", p.name)
             print("-------------------------------------------------------")
             continue
 
@@ -193,19 +254,21 @@ def main():
 
         print("Processing dataset:", p.name)
         CURRENT_DATASET = p.name
-        ds = load_dataset(
-            path="parquet",
-            data_files=str(p) + "/*.parquet",
+        ds_merged = load_dataset(
+            path="json",
+            data_files=str(p / "merged.jsonl"),
             split="train",
             cache_dir="/mnt/nvme0/tdy/cache_datasets",
         )
 
-        ds1 = ds.map(
+        ds_merged = ds_merged.select(error_rows)
+
+        ds1 = ds_merged.map(
             process,
             with_indices=True,
             num_proc=DEFAULT_NUM_PROCS - 100,
         )
-        with open(str(p / Path("train.jsonl")), "w", encoding="utf-8") as f:
+        with open(str(p / Path("fixfix1.jsonl")), "w", encoding="utf-8") as f:
             for rec_list in ds1["records"]:
                 for rec in rec_list:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
