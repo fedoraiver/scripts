@@ -12,9 +12,14 @@ from langdetect.lang_detect_exception import LangDetectException
 from utils import *
 
 MODEL = "HY"
-TARGET_LANGUAGE = "Spanish"
+TARGET_LANGUAGE = "French"
 CURRENT_DATASET = None
 RETRY_PER_CLIENT = 2
+OUTPUT_ROOT = Path("/mnt/nvme0/tdy/my_datasets/KaLM-embedding-finetuning-data-french")
+LANGUAGE_CODE_MAP = {
+    "Spanish": "es",
+    "French": "fr",
+}
 
 client1 = OpenAI(
     base_url="http://localhost:8001/v1",
@@ -40,14 +45,6 @@ dataset_table = json.load(
         "r",
     )
 )
-error_table = json.load(
-    open(
-        "/mnt/nvme0/tdy/my_datasets/KaLM-embedding-finetuning-data/error.json",
-        "r",
-    )
-)
-
-
 def split_text_into_chunks(text: str, max_len: int = 2666) -> List[str]:
     """
     将任意语言长文本分成多个 chunk,每个 chunk长度 <= max_len
@@ -109,9 +106,14 @@ def contains_chinese(s: str) -> bool:
     return any("\u4e00" <= ch <= "\u9fff" for ch in s[:20])
 
 
-def is_spanish(text: str) -> bool:
+def is_target_language(text: str, target_language: str) -> bool:
+    language_code = LANGUAGE_CODE_MAP.get(target_language)
+    if language_code is None:
+        raise ValueError(
+            f"Unsupported target language for detection: {target_language}"
+        )
     try:
-        return detect(text) == "es"
+        return detect(text) == language_code
     except LangDetectException:
         return False
 
@@ -178,35 +180,72 @@ def translate(content: str, target_language: str, idx, ratio=1.0) -> str:
     return content
 
 
-def translate_text(text: str, idx: int) -> str:
+def translate_text(text: str, idx: int, target_language: str) -> str:
     chunks = split_text_into_chunks(text)
-    translated_chunks = [translate(chunk, TARGET_LANGUAGE, idx) for chunk in chunks]
+    translated_chunks = [translate(chunk, target_language, idx) for chunk in chunks]
     return " ".join(translated_chunks)
 
 
-def keep_or_translate_to_spanish(text: str, idx: int) -> str:
-    if is_spanish(text):
+def keep_or_translate(text: str, idx: int, target_language: str) -> str:
+    if is_target_language(text, target_language):
         return text
-    return translate_text(text, idx)
+    return translate_text(text, idx, target_language)
+
+
+def keep_or_translate_labeled_text(text: str, idx: int, target_language: str) -> str:
+    instruct_query_match = re.match(
+        r"^(Instruct:\s+)(.*?)(\s+)(Query:\s+)(.*)$",
+        text,
+        flags=re.DOTALL,
+    )
+    if instruct_query_match:
+        _, instruct_text, separator, _, query_text = instruct_query_match.groups()
+        translated_instruct = keep_or_translate(
+            instruct_text.strip(), idx, target_language
+        )
+        translated_query = keep_or_translate(query_text.strip(), idx, target_language)
+        return f"Instruct: {translated_instruct}{separator}Query: {translated_query}"
+
+    query_match = re.match(r"^(Query:\s+)(.*)$", text, flags=re.DOTALL)
+    if query_match:
+        _, query_text = query_match.groups()
+        translated_query = keep_or_translate(query_text.strip(), idx, target_language)
+        return f"Query: {translated_query}"
+
+    instruct_match = re.match(
+        r"^(Instruct:\s+)(.*)$", text, flags=re.DOTALL
+    )
+    if instruct_match:
+        _, instruct_text = instruct_match.groups()
+        translated_instruct = keep_or_translate(
+            instruct_text.strip(), idx, target_language
+        )
+        return f"Instruct: {translated_instruct}"
+
+    return keep_or_translate(text, idx, target_language)
 
 
 def process(sample: dict[str, str | list[str]], idx):
     records = []
     record = sample
 
-    prefix, query_text = record["origin_query"].split("Query:", 1)
-    query_text = query_text.strip()
-    record["query"] = prefix + "Query: " + keep_or_translate_to_spanish(query_text, idx)
+    record["query"] = keep_or_translate_labeled_text(
+        record["query"], idx, TARGET_LANGUAGE
+    )
     records.append(record)
 
     new_pos = []
-    for pos_passage in record["origin_pos"]:
-        new_pos.append(keep_or_translate_to_spanish(pos_passage, idx))
+    for pos_passage in record["pos"]:
+        new_pos.append(
+            keep_or_translate_labeled_text(pos_passage, idx, TARGET_LANGUAGE)
+        )
     record["pos"] = new_pos
 
     new_neg = []
-    for neg_passage in record["origin_neg"]:
-        new_neg.append(keep_or_translate_to_spanish(neg_passage, idx))
+    for neg_passage in record["neg"]:
+        new_neg.append(
+            keep_or_translate_labeled_text(neg_passage, idx, TARGET_LANGUAGE)
+        )
     record["neg"] = new_neg
 
     return {"records": records}
@@ -224,8 +263,6 @@ def main():
 
     kalm_path = Path(args.path)
 
-    datasets_with_errors = error_table.get("datasets", {})
-
     results = {}
     for p in kalm_path.iterdir():
         if not p.is_dir():
@@ -233,45 +270,30 @@ def main():
         if p.name.startswith("."):
             continue
 
-        # if (p / "fix5.jsonl").exists():
-        #     print("fix5.jsonl already exists, skip:", p.name)
-        #     print("-------------------------------------------------------")
-        #     continue
-
-        dataset_error_info = datasets_with_errors.get(p.name)
-        if dataset_error_info is None:
-            print("Dataset not in error.json, skip:", p.name)
-            print("-------------------------------------------------------")
-            continue
-
-        error_rows = sorted(set(dataset_error_info.get("error_rows", [])))
-        if not error_rows:
-            print("Dataset has no error_rows, skip:", p.name)
-            print("-------------------------------------------------------")
-            continue
-
         print(dataset_table[p.name])
 
         print("Processing dataset:", p.name)
         CURRENT_DATASET = p.name
-        ds_merged = load_dataset(
+        ds_origin = load_dataset(
             path="json",
-            data_files=str(p / "merged.jsonl"),
+            data_files=str(p / "origin.jsonl"),
             split="train",
             cache_dir="/mnt/nvme0/tdy/cache_datasets",
         )
 
-        ds_merged = ds_merged.select(error_rows)
-
-        ds1 = ds_merged.map(
+        ds1 = ds_origin.map(
             process,
             with_indices=True,
             num_proc=DEFAULT_NUM_PROCS - 100,
         )
-        with open(str(p / Path("fixfix1.jsonl")), "w", encoding="utf-8") as f:
+        output_dir = OUTPUT_ROOT / p.name
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / "translated.jsonl"
+        with open(output_path, "w", encoding="utf-8") as f:
             for rec_list in ds1["records"]:
                 for rec in rec_list:
                     f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        print("Saved to:", output_path)
         print("-------------------------------------------------------")
 
 
