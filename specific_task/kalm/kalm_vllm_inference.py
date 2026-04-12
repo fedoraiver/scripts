@@ -270,7 +270,16 @@ def main():
         if p.name.startswith("."):
             continue
 
-        print(dataset_table[p.name])
+        output_dir = OUTPUT_ROOT / p.name
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_path = output_dir / "translated.jsonl"
+        if output_path.exists():
+            print("Skip dataset (already processed):", p.name)
+            print("-------------------------------------------------------")
+            continue
+
+        if p.name in dataset_table:
+            print(dataset_table[p.name])
 
         print("Processing dataset:", p.name)
         CURRENT_DATASET = p.name
@@ -286,9 +295,6 @@ def main():
             with_indices=True,
             num_proc=DEFAULT_NUM_PROCS - 100,
         )
-        output_dir = OUTPUT_ROOT / p.name
-        output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / "translated.jsonl"
         with open(output_path, "w", encoding="utf-8") as f:
             for rec_list in ds1["records"]:
                 for rec in rec_list:
